@@ -28,6 +28,90 @@ if OUTPUT_UNIQUE_FILE_ID:
     file_hash = hashlib.md5(pathlib.Path(__file__).read_bytes()).hexdigest()
     print(f'Unique file ID: {file_hash}')
 
+
+from rait import matrix
+
+dt_s = 1.0
+
+class KalmanFilter:
+    """ [x, y, x_dot, y_dot, x_ddot, yddot] """
+    def __init__(self, x: matrix):
+        self.x = x
+
+        self.P = matrix()
+        self.P.zero(6, 6)
+        for n in range(6):
+            self.P.value[n][n] = 0.05
+
+        # white noise model: https://nbviewer.org/github/rlabbe/Kalman-and-Bayesian-Filters-in-Python/blob/master/07-Kalman-Filter-Math.ipynb
+        psd_factor = 1e-6
+        q5 = psd_factor * dt_s**5 / 20
+        q4 = psd_factor * dt_s**4 / 8
+        q3 = psd_factor * dt_s**3 / 6
+        q2 = psd_factor * dt_s**2 / 2
+        q1 = psd_factor * dt_s
+        self.Q = matrix([
+            [q5, 0,  q4, 0,  q3, 0 ],
+            [0,  q5, 0,  q4, 0,  q3],
+            [q4, 0,  q3, 0,  q2, 0 ],
+            [0,  q4, 0,  q3, 0,  q2],
+            [q3, 0,  q2, 0,  q1, 0 ],
+            [0,  q3, 0,  q2, 0,  q1],
+        ])
+
+        
+        # CA motion modell
+
+        self.F = matrix()
+        self.F.zero(6, 6)
+   
+        # x and y rows
+
+        self.F.value[0][0] = 1
+        self.F.value[1][1] = 1
+   
+        self.F.value[0][2] = dt_s
+        self.F.value[1][3] = dt_s
+
+        self.F.value[0][4] = 0.5 * dt_s
+        self.F.value[1][5] = 0.5 * dt_s
+
+        # x_dot and y_dot rows
+
+        self.F.value[2][2] = 1
+        self.F.value[3][3] = 1
+
+        self.F.value[2][4] = dt_s
+        self.F.value[3][5] = dt_s
+
+        # x_ddot and y_ddot row
+        self.F.value[4][4] = 1
+        self.F.value[5][5] = 1
+
+        # measurement noise
+        self.R = matrix()
+        self.R.zero(2, 2)
+        self.R.value[0][0] = 1.0
+        self.R.value[1][1] = 1.0
+
+    def predict(self):
+        self.x = self.F * self.x
+        self.P = self.F * self.P * self.F.transpose() + self.Q
+
+    def update(self, measurement):
+        # pulled the update equations from https://en.wikipedia.org/wiki/Kalman_filter
+        H = matrix()
+        H.zero(2, 6)
+        H.value[0][0] = 1
+        H.value[1][1] = 1
+        innov = measurement - H * self.x
+        S = H * self.P * H.transpose() + self.R
+        K = self.P * H.transpose() * S.inverse()
+        self.x = self.x + K * innov
+        I = matrix()
+        I.identity(6)
+        self.P = (I - K * H) * self.P
+
 class Spaceship():
     """A class representing the Environment within which the spaceship will run,
      and containing the methods that will act on the spaceship."""
@@ -38,6 +122,7 @@ class Spaceship():
         self.y_bounds = bounds['y']
         self.agent_pos_start = xy_start
 
+        self.asteroids = dict()
 
     def predict_from_observations(self, asteroid_observations):
         """Observe asteroid locations and predict their positions at time t+1.
@@ -76,7 +161,27 @@ class Spaceship():
 
         # FOR STUDENT TODO: Update the Spaceship's estimate of where the asteroids will be located in the next time step
 
-        return {-1: (5.5, 5.5)}
+        for key in self.asteroids:
+            self.asteroids[key].predict()
+
+        for key in asteroid_observations:
+            mx, my = asteroid_observations[key]
+            if key not in self.asteroids:
+                init_state = matrix([[mx], [my], [0], [0], [0], [0]])
+                self.asteroids[key] = KalmanFilter(init_state)
+                continue
+            self.asteroids[key].update(matrix([[mx], [my]]))
+
+        # todo: i don't kill objects... should implement that
+
+        return_dict = {}
+        for key in asteroid_observations:
+            f = self.asteroids[key]
+            x_next = f.F * f.x
+            return_dict[key] = (x_next.value[0][0], x_next.value[1][0])
+
+        return return_dict
+
 
     def jump(self, asteroid_observations, agent_data):
         """ Return the id of the asteroid the spaceship should jump/hop onto in the next timestep
@@ -108,12 +213,48 @@ class Spaceship():
         return 3, estimated_return
 
         """
-        # FOR STUDENT TODO: Update the idx of the asteroid on which to jump
-        idx = False
+        asteroids_next_ts = self.predict_from_observations(asteroid_observations)
+        agent_position = asteroids_next_ts[agent_data["ridden_asteroid"]] if agent_data["ridden_asteroid"] else self.agent_pos_start
+        
+        candidates = [(key, asteroids_next_ts[key][0], asteroids_next_ts[key][1]) for key in asteroids_next_ts]
 
-        return idx, None
+        def consider(candidate):
+            key, x, y = candidate
+            distance = ((x - agent_position[0])**2 + (y - agent_position[1])**2)**0.5
+            EPSILON = 0.1
+            # too far
+            if distance > agent_data["jump_distance"] - EPSILON:
+                return False
+
+            # already on 
+            if key == agent_data["ridden_asteroid"]:
+                return False
+
+            # don't pick asteroids that will take you out of bounds ever
+            if abs(x - self.x_bounds[0]) < 0.3 and self.asteroids[key].x.value[2][0] < 0:
+                return False
+
+            if abs(x - self.x_bounds[1]) < 0.3 and self.asteroids[key].x.value[2][0] > 0:
+                return False
+
+            return True
+ 
+        # sort so the most high y asteroid is first
+        candidates = [x for x in candidates if consider(x)]
+        candidates.sort(key=lambda x: -x[2])
+
+        # FOR STUDENT TODO: Update the idx of the asteroid on which to jump
+        idx = candidates[0][0] if len(candidates) > 0 else None
+
+        # is current asteroid going to win
+        if agent_data["ridden_asteroid"] and self.asteroids[agent_data["ridden_asteroid"]].x.value[3][0] > 0 and abs(agent_position[1] - self.y_bounds[1]) < 0.2:
+            idx = None  # stay on winner
+        if idx is not None and agent_position[1] > asteroids_next_ts[idx][1]:
+            idx = None  # stay on higher asteroid 
+
+        return idx, asteroids_next_ts
 
 def who_am_i():
     # Please specify your GT login ID in the whoami variable (ex: jsmith226).
-    whoami = ''
+    whoami = 'sparthaje3'
     return whoami

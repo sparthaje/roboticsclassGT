@@ -1,3 +1,23 @@
 .DS_Store
 .venv
+.python-version
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environments
+*.env
+.env.*
 
