@@ -189,6 +189,16 @@ TASKS = (
          GradingTask(30, 'jump', 1, JUMP_TIMEOUT),
          GradingTask(31, 'jump', 1, JUMP_TIMEOUT),
          GradingTask(32, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(33, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(34, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(35, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(36, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(37, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(38, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(39, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(40, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(41, 'jump', 1, JUMP_TIMEOUT),
+         GradingTask(42, 'jump', 1, JUMP_TIMEOUT),
 )
 
 

@@ -2,8 +2,10 @@
 Pygame-based estimation & jump debugger.
 
 Usage:
-  python test2.py            # estimation mode  (cases 1-15)
-  python test2.py --jump     # jump mode        (cases 16-32)
+  python test2.py                  # estimation mode  (cases 1-15)
+  python test2.py --jump           # jump mode        (cases 16-32)
+  python test2.py --case 5         # start at case 5 (estimation)
+  python test2.py --jump --case 20 # start at case 20 (jump)
 
 Controls:
   SPACE / RIGHT  - advance one timestep
@@ -185,10 +187,7 @@ def run_jump_steps(params):
 
         agent_pos_before = agent.get_agent_position()
 
-        try:
-            selected_idx, estimates = spaceship.jump(deepcopy(noisy), deepcopy(agent_data))
-        except Exception as e:
-            selected_idx, estimates = None, None
+        selected_idx, estimates = spaceship.jump(deepcopy(noisy), deepcopy(agent_data))
 
         # Build per-asteroid debug info explaining why each was accepted/rejected
         candidates_debug = {}
@@ -196,21 +195,35 @@ def run_jump_steps(params):
             double_jump = agent_data['ridden_asteroid'] is None
             jd = agent.jump_distance * (2 if double_jump else 1)
             apx, apy = agent_pos_before
+            EPS_BOUNDS = 0.4
+            x_bounds_loc = params['arena_x_bounds']
+            y_bounds_loc = params['arena_y_bounds']
             for key, (ex, ey) in estimates.items():
                 dist = ((ex - apx)**2 + (ey - apy)**2)**0.5
                 reasons = []
+                kf = spaceship.asteroids.get(key)
+                vx = kf.x.value[2][0] if kf else 0.0
+                vy = kf.x.value[3][0] if kf else 0.0
+                speed = (vx**2 + vy**2)**0.5
+                vy_unit = vy / (speed + 1e-9)
                 if key == agent_data['ridden_asteroid']:
                     reasons.append('already riding')
                 elif dist > jd - 0.1:
                     reasons.append(f'too far ({dist:.3f} > {jd:.3f})')
-                elif ey < apy:
-                    reasons.append('below agent')
-                elif key in spaceship.asteroids and spaceship.asteroids[key].x.value[3][0] < 0:
-                    reasons.append(f'moving down (vy={spaceship.asteroids[key].x.value[3][0]:.3f})')
+                else:
+                    if kf:
+                        if abs(ex - x_bounds_loc[0]) < EPS_BOUNDS and vx < 0:
+                            reasons.append('hitting left wall')
+                        if abs(ex - x_bounds_loc[1]) < EPS_BOUNDS and vx > 0:
+                            reasons.append('hitting right wall')
+                        if abs(ey - y_bounds_loc[0]) < EPS_BOUNDS and vy < 0:
+                            reasons.append('hitting bottom wall')
                 candidates_debug[key] = {
                     'dist': dist, 'est_pos': (ex, ey),
                     'reasons': reasons,
                     'selected': key == selected_idx,
+                    'vy_unit': vy_unit,
+                    'vx': vx, 'vy': vy,
                 }
 
         ridden     = agent_data['ridden_asteroid']
@@ -528,9 +541,13 @@ def draw_jump_frame(screen, font, small_font, step_data, case_id, t, total_t,
         else:
             tip_color = RED
             status = 'REJECTED'
+        vy_unit = info.get('vy_unit', 0.0)
+        vx      = info.get('vx', 0.0)
+        vy      = info.get('vy', 0.0)
         lines = [
             f"Asteroid #{selected_ast_id}  {status}",
             f"dist={info['dist']:.3f}   Δy={dy:+.3f}",
+            f"vel=({vx:+.3f}, {vy:+.3f})  vy_unit={vy_unit:+.3f}",
             f"reason: {reasons}",
         ]
         line_surfs = [small_font.render(ln, True, tip_color) for ln in lines]
@@ -552,6 +569,16 @@ def draw_jump_frame(screen, font, small_font, step_data, case_id, t, total_t,
 def main():
     jump_mode = '--jump' in sys.argv
 
+    start_case = None
+    if '--case' in sys.argv:
+        idx = sys.argv.index('--case')
+        if idx + 1 < len(sys.argv):
+            try:
+                start_case = int(sys.argv[idx + 1])
+            except ValueError:
+                print(f"Invalid --case value: {sys.argv[idx + 1]}")
+                return
+
     pygame.init()
     W, H = 900, 700
     screen = pygame.display.set_mode((W, H), pygame.RESIZABLE)
@@ -566,7 +593,14 @@ def main():
         print("No cases found for this mode.")
         return
 
-    case_idx      = 0
+    case_idx = 0
+    if start_case is not None:
+        target_id = f'case{start_case}'
+        if target_id in case_ids:
+            case_idx = case_ids.index(target_id)
+        else:
+            print(f"Case {start_case} not found in {'jump' if jump_mode else 'estimate'} cases.")
+            return
     case_steps    = None
     t             = 0
     auto_play     = False

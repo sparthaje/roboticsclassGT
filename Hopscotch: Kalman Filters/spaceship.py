@@ -226,31 +226,31 @@ class Spaceship():
             if distance > agent_data["jump_distance"] - EPSILON:
                 return False
 
-            # already on 
-            if key == agent_data["ridden_asteroid"]:
-                return False
-
             # don't pick asteroids that will take you out of bounds ever
-            if abs(x - self.x_bounds[0]) < 0.3 and self.asteroids[key].x.value[2][0] < 0:
+            EPS = 0.4
+            if abs(x - self.x_bounds[0]) < EPS and self.asteroids[key].x.value[2][0] < 0:
                 return False
 
-            if abs(x - self.x_bounds[1]) < 0.3 and self.asteroids[key].x.value[2][0] > 0:
+            if abs(x - self.x_bounds[1]) < EPS and self.asteroids[key].x.value[2][0] > 0:
+                return False
+
+            if abs(y - self.y_bounds[0]) < EPS and self.asteroids[key].x.value[3][0] < 0:
                 return False
 
             return True
  
-        # sort so the most high y asteroid is first
+        # sort so the velocity most in the up direction is first. note this includes the current asteroid as a candidate, which is the same as not jumping. if current vel is good no reason to abandon
         candidates = [x for x in candidates if consider(x)]
-        candidates.sort(key=lambda x: -x[2])
+        candidates.sort(key=lambda x: -(self.asteroids[x[0]].x.value[3][0] / ((self.asteroids[x[0]].x.value[2][0]**2 + self.asteroids[x[0]].x.value[3][0]**2)**0.5 + 1e-9)))
 
         # FOR STUDENT TODO: Update the idx of the asteroid on which to jump
         idx = candidates[0][0] if len(candidates) > 0 else None
 
-        # is current asteroid going to win
+        # is current asteroid going to win the game, then no reason to jump
         if agent_data["ridden_asteroid"] and self.asteroids[agent_data["ridden_asteroid"]].x.value[3][0] > 0 and abs(agent_position[1] - self.y_bounds[1]) < 0.2:
             idx = None  # stay on winner
-        if idx is not None and agent_position[1] > asteroids_next_ts[idx][1]:
-            idx = None  # stay on higher asteroid 
+        if idx == agent_data["ridden_asteroid"] and idx is not None:
+            idx = None
 
         return idx, asteroids_next_ts
 
