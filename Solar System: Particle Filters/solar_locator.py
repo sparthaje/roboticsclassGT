@@ -62,7 +62,7 @@ def estimate_next_pos(gravimeter_measurement, get_theoretical_gravitational_forc
     # time.sleep(1)  # uncomment to pause for the specified seconds each timestep
     
     # initialize particle filter
-    N = 20000
+    N = 5000
     def random_particle():
         x = random.random() * 8*AU - 4*AU
         y = random.random() * 8*AU - 4*AU
@@ -162,16 +162,79 @@ def next_angle(solar_system, percent_illuminated_measurements, percent_illuminat
         optional_points_to_plot: List[Tuple[float, float, float]].
             A list of tuples like (x,y,h) to plot for the visualization
     """
+    N = 5000
+    def random_particle():
+        x = random.random() * 8*AU - 4*AU
+        y = random.random() * 8*AU - 4*AU
+        h = atan2(y, x) + pi/2
+        return (x, y, h)
+ 
+    if other is None:
+        other = [
+            random_particle() for _ in range(N)
+        ]
+
+    def compute_weight(x, y):
+        # assume its a list of K guassians RV
+        VAR = 2.0
+        expected_illum = percent_illuminated_sense_func(x, y)
+        w = 1.0
+        for expected, measured in zip(expected_illum, percent_illuminated_measurements):
+            w *= (1 / (2 * pi * VAR) ** 0.5) * e ** (-((measured - expected)**2) / (2 * VAR))
+        return w
+
+    weights = [compute_weight(x[0], x[1]) for x in other]
+    if sum(weights) > 0:
+        other = random.choices(other, weights=weights, k=N)
+    else:
+        # if sum weights is zero all the particles are probably bad -> take another guess
+        other = [random_particle() for _ in range(N)]
+
+    for idx in range(len(other)):
+        # only fuzz a few.
+        if random.random() < 0.90:
+            continue
+
+        FUZZ_SIZE = 0.02 * AU
+        FUZZ_HEADING = 0.01 * pi
+        x, y, h = other[idx]
+        x += random.random() * (FUZZ_SIZE) - (0.5 * FUZZ_SIZE)
+        y += random.random() * FUZZ_SIZE - 0.5*FUZZ_SIZE
+        h += random.random() * FUZZ_HEADING - 0.5 * FUZZ_HEADING
+        h = atan2(sin(h), cos(h)) # realias
+        other[idx] = (x, y, h)
+
+    for idx in range(len(other)):
+        x, y, heading = other[idx]
+
+        # propagate forward with bicycle model
+        beta = (distance / 10.2) * tan(steering)
+        
+        radius = distance / beta
+        cx = x - sin(heading) * radius
+        cy = y + cos(heading) * radius
+        
+        heading = (heading + beta)
+        # alias heading
+        heading = atan2(sin(heading), cos(heading))
+
+        x = cx + sin(heading) * radius
+        y = cy - cos(heading) * radius
+
+        other[idx] = (x, y, heading)
+
+    mean = (0.0, 0.0)
+    for x, y, _ in other:
+        mean = (mean[0] + x, mean[1] + y)
+    
+    mean = (mean[0] / len(other), mean[1] / len(other))
+
 
     # At what angle to send an SOS message this timestep
-    bearing = 0.0
-    xy_estimate = (110172640485.32968, -66967324464.19617)
+    home = solar_system.planets[-1]
+    bearing = atan2(home.r[1] - mean[1], home.r[0] - mean[0])
 
-    # You may optionally also return a list of (x,y) or (x,y,h) points that
-    # you would like the PLOT_PARTICLES=True visualizer to plot.
-    optional_points_to_plot = [ (1*AU,1*AU), (2*AU,2*AU), (3*AU,3*AU) ]  # Sample plot points
-
-    return bearing, xy_estimate, other, optional_points_to_plot
+    return bearing, mean, other, other
 
 
 def who_am_i():
