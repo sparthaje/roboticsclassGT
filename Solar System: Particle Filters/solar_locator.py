@@ -60,22 +60,73 @@ def estimate_next_pos(gravimeter_measurement, get_theoretical_gravitational_forc
             A list of tuples like (x,y,h) to plot for the visualization
     """
     # time.sleep(1)  # uncomment to pause for the specified seconds each timestep
+    
+    # initialize particle filter
+    N = 20000
+    def random_particle():
+        x = random.random() * 8*AU - 4*AU
+        y = random.random() * 8*AU - 4*AU
+        h = atan2(y, x) + pi/2
+        return (x, y, h)
+ 
+    if other is None:
+        other = [
+            random_particle() for _ in range(N)
+        ]
 
-    # example of how to get the gravity magnitude at a point in the solar system:
-    gravity_magnitude = get_theoretical_gravitational_force_at_point(-1*AU, 1*AU)
+    def compute_weight(x, y):
+        VAR = 1e-14
+        expected_gravity_magnitude = get_theoretical_gravitational_force_at_point(x, y)
+        w = (1 / (2 * pi * VAR) ** 0.5) * e ** (-((gravimeter_measurement - expected_gravity_magnitude)**2) / (2 * VAR))
+        return w
 
-    # TODO - remove this canned answer which makes this template code
-    # pass one test case once you start to write your solution....
-    xy_estimate = (139048139368.39096, -2225218287.6720667)
+    weights = [compute_weight(x[0], x[1]) for x in other]
+    if sum(weights) > 0:
+        other = random.choices(other, weights=weights, k=N)
+    else:
+        # if sum weights is zero all the particles are probably bad -> take another guess
+        other = [random_particle() for _ in range(N)]
 
-    # You may optionally also return a list of (x,y,h) points that you would like
-    # the PLOT_PARTICLES=True visualizer to plot for visualization purposes.
-    # If you include an optional third value, it will be plotted as the heading
-    # of your particle.
-    optional_points_to_plot = [(1*AU, 1*AU), (2*AU, 2*AU), (3*AU, 3*AU)]  # Sample (x,y) to plot
-    optional_points_to_plot = [(1*AU, 1*AU, 0.5), (2*AU, 2*AU, 1.8), (3*AU, 3*AU, 3.2)]  # (x,y,heading)
+    for idx in range(len(other)):
+        # only fuzz a few.
+        if random.random() < 0.90:
+            continue
 
-    return xy_estimate, other, optional_points_to_plot
+        FUZZ_SIZE = 0.02 * AU
+        FUZZ_HEADING = 0.01 * pi
+        x, y, h = other[idx]
+        x += random.random() * (FUZZ_SIZE) - (0.5 * FUZZ_SIZE)
+        y += random.random() * FUZZ_SIZE - 0.5*FUZZ_SIZE
+        h += random.random() * FUZZ_HEADING - 0.5 * FUZZ_HEADING
+        h = atan2(sin(h), cos(h)) # realias
+        other[idx] = (x, y, h)
+
+    for idx in range(len(other)):
+        x, y, heading = other[idx]
+
+        # propagate forward with bicycle model
+        beta = (distance / 10.2) * tan(steering)
+        
+        radius = distance / beta
+        cx = x - sin(heading) * radius
+        cy = y + cos(heading) * radius
+        
+        heading = (heading + beta)
+        # alias heading
+        heading = atan2(sin(heading), cos(heading))
+
+        x = cx + sin(heading) * radius
+        y = cy - cos(heading) * radius
+
+        other[idx] = (x, y, heading)
+
+    mean = (0.0, 0.0)
+    for x, y, _ in other:
+        mean = (mean[0] + x, mean[1] + y)
+    
+    mean = (mean[0] / len(other), mean[1] / len(other))
+
+    return mean, other, other
 
 
 def next_angle(solar_system, percent_illuminated_measurements, percent_illuminated_sense_func,
@@ -125,5 +176,5 @@ def next_angle(solar_system, percent_illuminated_measurements, percent_illuminat
 
 def who_am_i():
     # Please specify your GT login ID in the whoami variable (ex: jsmith226).
-    whoami = ''
+    whoami = 'sparthaje3'
     return whoami

@@ -492,7 +492,7 @@ class PlanetSimulator(object):
                             if len(p) > 2:
                                 t.shape("triangle")
                                 t.shapesize(0.2, 0.4)
-                                t.settiltangle(p[2] * 180 / math.pi)
+                                t.tiltangle(p[2] * 180 / math.pi)
                             else:
                                 t.shape("circle")
                                 t.shapesize(0.1, 0.1)
@@ -899,7 +899,7 @@ class PlanetSimulator(object):
                             if len(p) > 2:
                                 t.shape("triangle")
                                 t.shapesize(0.2, 0.4)
-                                t.settiltangle(p[2] * 180 / math.pi)
+                                t.tiltangle(p[2] * 180 / math.pi)
                             else:
                                 t.shape("circle")
                                 t.shapesize(0.1, 0.1)
@@ -1239,6 +1239,33 @@ if file_checker:
 # Only run all of the test automatically if this file was executed from the command line.
 # Otherwise, let Nose/py.test do it's own thing with the test cases.
 if __name__ == "__main__":
+    import argparse
+    _parser = argparse.ArgumentParser(description="Run the Solar System particle filter test suite.")
+    _parser.add_argument("--plot", action="store_true",
+                         help="Show turtle visualization (implies --single-process and bumps --time-limit).")
+    _parser.add_argument("--verbose", action="store_true", help="Print per-step actual vs. predicted.")
+    _parser.add_argument("--single-process", action="store_true",
+                         help="Run in a single process (disables the CPU timeout).")
+    _parser.add_argument("--time-limit", type=float, default=None, help="Per-test CPU time limit in seconds.")
+    _parser.add_argument("--part", choices=["a", "b", "ab"], default=None,
+                         help="Which part(s) to run: a, b, or ab (default: both).")
+    _args = _parser.parse_args()
+
+    if _args.verbose:
+        VERBOSE = True
+    if _args.single_process:
+        DEBUGGING_SINGLE_PROCESS = True
+    if _args.plot:
+        PLOT_PARTICLES = True
+        DEBUGGING_SINGLE_PROCESS = True  # turtle needs the main thread (esp. macOS)
+        if _args.time_limit is None:
+            TIME_LIMIT = 600  # don't abort mid-visualization
+    if _args.time_limit is not None:
+        TIME_LIMIT = _args.time_limit
+    if _args.part is not None:
+        PART_A = "a" in _args.part
+        PART_B = "b" in _args.part
+
     if stack_trace:
         print(stack_trace)
         print('score: 0')
@@ -1270,10 +1297,19 @@ if __name__ == "__main__":
                     result = unittest.TestResult()
                     suite.run(result)
 
+                    def _one_line(test, tb):
+                        # Pull out just the final exception message (e.g. the
+                        # AssertionError text) and collapse it onto one line.
+                        last = tb.strip().splitlines()[-1] if tb.strip() else tb
+                        if ": " in last:
+                            last = last.split(": ", 1)[1]
+                        last = " ".join(last.split())
+                        return f"{test}: {last}"
+
                     for x in result.errors:
-                        print(x[0], x[1])
+                        print(_one_line(x[0], x[1]))
                     for x in result.failures:
-                        print(x[0], x[1])
+                        print(_one_line(x[0], x[1]))
 
                     num_errors = len(result.errors)
                     num_fails = len(result.failures)
