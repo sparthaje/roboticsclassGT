@@ -17,8 +17,8 @@
 #                           Set to True to see graphs after simulation completes
 # VISUALIZE_TWIDDLE      - Enable visualization during Twiddle parameter tuning
 
-SHOW_VISUALIZATION = True
-SHOW_PLOTS = True
+SHOW_VISUALIZATION = False
+SHOW_PLOTS = False
 VISUALIZE_TWIDDLE = False
 
 # Derived flags for backwards compatibility
