@@ -92,6 +92,63 @@ def pid_roll(target_x, drone_x, tau_p=0, tau_d=0, tau_i=0, data:dict() = {}):
     return general_pid(target_x, drone_x, tau_p, tau_d, 0.0, data)  # NOTE: PD controller
 
 
+def compute_error(hover_error, max_allowed_vel, drone_max_vel, max_allowed_oscil, total_oscillations, accept=0.04):
+    if drone_max_vel <= 0:
+        return 3.0
+
+    hover_score = 1.0 if hover_error <= 0 else min(accept / hover_error, 1.0)
+
+    vel_score = 1.0
+    if max_allowed_vel and drone_max_vel > max_allowed_vel:
+        vel_score = min(max_allowed_vel / drone_max_vel, 1.0)
+
+    osc_score = 1.0
+    if max_allowed_oscil != -1 and total_oscillations > max_allowed_oscil:
+        osc_score = min(max_allowed_oscil / total_oscillations, 1.0)
+
+    return 3.0 - (hover_score + vel_score + osc_score)
+
+def twiddle(run, params, dp, threshold=1e-4, plateau_window=30, plateau_frac=0.01, accept_error=1e-3):
+    _n = [0]
+    _run = run
+    def run(p):
+        _n[0] += 1
+        return _run(p)
+
+    best_error = compute_error(*run(params))
+    error_history = []
+
+    while sum(dp) > threshold and best_error > accept_error and _n[0] < 5000:
+        for idx in range(len(params)):
+            params[idx] += dp[idx]
+            error = compute_error(*run(params))
+
+            # good signal
+            if error < best_error:
+                dp[idx] *= 1.05
+                best_error = error
+
+            else:
+                # check other direction
+                params[idx] -= 2 * dp[idx]
+                error = compute_error(*run(params))
+
+                if error < best_error:
+                    dp[idx] *= 1.05
+                    best_error = error
+                else:
+                    params[idx] += dp[idx]  # reset to origin
+                    dp[idx] *= 0.95
+
+        error_history.append(best_error)
+        if len(error_history) >= plateau_window:
+            recent = error_history[-plateau_window:]
+            if max(recent) - min(recent) < max(plateau_frac * best_error, accept_error):
+                break
+
+    return params
+
+
 def find_parameters_thrust(run_callback, tune='thrust', DEBUG=False, VISUALIZE=False):
     '''
     Student implementation of twiddle algorithm will go here. Here you can focus on
@@ -120,52 +177,18 @@ def find_parameters_thrust(run_callback, tune='thrust', DEBUG=False, VISUALIZE=F
     '''
 
     # Initialize a list to contain your gain values that you want to tune
-    params = [0.0, 0.0, 0.0]
+    params = [1.0, 30.0, 0.0]
 
     # Create dicts to pass the parameters to run_callback
     thrust_params = lambda params: {'tau_p': params[0], 'tau_d': params[1], 'tau_i': params[2]}
 
     roll_params   = {'tau_p': 0, 'tau_d': 0, 'tau_i': 0}
 
-    # Call run_callback, passing in the dicts of thrust and roll gain values
-    rc_out = run_callback(thrust_params(params), roll_params, VISUALIZE=VISUALIZE)
+    run = lambda p: run_callback(thrust_params(p), roll_params, VISUALIZE=VISUALIZE)
 
-    def compute_error(hover_error, max_allowed_vel, drone_max_vel, max_allwoed_oscil, total_oscillations):
-        return hover_error + 0.05 * (total_oscillations / max_allwoed_oscil) + 0.05 * (drone_max_vel / max_allowed_vel)
-
-    # Calculate best_error from above returned values
-    best_error = compute_error(*rc_out)
-
-    dp = [1.0, 1.0, 1.0]
-    threshold = 1e-4
-
-    while sum(dp) > threshold:
-        for idx in range(3):
-            params[idx] += dp[idx]
-            rc_out = run_callback(thrust_params(params), roll_params, VISUALIZE=VISUALIZE)
-            error = compute_error(*rc_out)
-
-            # good signal
-            if error < best_error:
-                dp[idx] *= 1.05
-                best_error = error 
-
-            else:
-                # check other direction 
-                params[idx] -= 2 * dp[idx]
-                error = compute_error(*run_callback(thrust_params(params), roll_params, VISUALIZE=VISUALIZE))
-
-                if error < best_error:
-                    dp[idx] *= 1.05 
-                    best_error = error
-                else:
-                    params[idx] += dp[idx]  # reset to origin
-                    dp[idx] *= 0.95
-
-    # Implement your code to use twiddle to tune the params and find the best_error
+    params = twiddle(run, params, [1.0, 5.0, 0.0])
 
     # Return the dict of gain values that give the best error.
-
     return thrust_params(params), roll_params
 
 def find_parameters_with_int(run_callback, tune='thrust', DEBUG=False, VISUALIZE=False):
@@ -195,52 +218,18 @@ def find_parameters_with_int(run_callback, tune='thrust', DEBUG=False, VISUALIZE
 
     '''
     # Initialize a list to contain your gain values that you want to tune
-    params = [0.0, 0.0, 0.0]
+    params = [1.0, 30.0, 0.0]
 
     # Create dicts to pass the parameters to run_callback
     thrust_params = lambda params: {'tau_p': params[0], 'tau_d': params[1], 'tau_i': params[2]}
 
     roll_params   = {'tau_p': 0, 'tau_d': 0, 'tau_i': 0}
 
-    # Call run_callback, passing in the dicts of thrust and roll gain values
-    rc_out = run_callback(thrust_params(params), roll_params, VISUALIZE=VISUALIZE)
+    run = lambda p: run_callback(thrust_params(p), roll_params, VISUALIZE=VISUALIZE)
 
-    def compute_error(hover_error, max_allowed_vel, drone_max_vel, max_allwoed_oscil, total_oscillations):
-        return hover_error
-
-    # Calculate best_error from above returned values
-    best_error = compute_error(*rc_out)
-
-    dp = [1.0, 1.0, 1e-3]
-    threshold = 1e-4
-
-    while sum(dp) > threshold:
-        for idx in range(3):
-            params[idx] += dp[idx]
-            rc_out = run_callback(thrust_params(params), roll_params, VISUALIZE=VISUALIZE)
-            error = compute_error(*rc_out)
-
-            # good signal
-            if error < best_error:
-                dp[idx] *= 1.05
-                best_error = error 
-
-            else:
-                # check other direction 
-                params[idx] -= 2 * dp[idx]
-                error = compute_error(*run_callback(thrust_params(params), roll_params, VISUALIZE=VISUALIZE))
-
-                if error < best_error:
-                    dp[idx] *= 1.05 
-                    best_error = error
-                else:
-                    params[idx] += dp[idx]  # reset to origin
-                    dp[idx] *= 0.95
-
-    # Implement your code to use twiddle to tune the params and find the best_error
+    params = twiddle(run, params, [0.2, 5.0, 1e-3])
 
     # Return the dict of gain values that give the best error.
-
     return thrust_params(params), roll_params
 
 
@@ -271,52 +260,18 @@ def find_parameters_with_roll(run_callback, tune='both', DEBUG=False, VISUALIZE=
 
     '''
     # Initialize a list to contain your gain values that you want to tune
-    params = [0.0, 0.0, 0.0, 0.0, 0.0]
+    params = [1.0, 30.0, 0.0, 0.16, 9.6]
 
     # Create dicts to pass the parameters to run_callback
     thrust_params = lambda params: {'tau_p': params[0], 'tau_d': params[1], 'tau_i': params[2]}
 
     roll_params   = lambda params: {'tau_p': params[3], 'tau_d': params[4],'tau_i': 0}
 
-    # Call run_callback, passing in the dicts of thrust and roll gain values
-    rc_out = run_callback(thrust_params(params), roll_params(params), VISUALIZE=VISUALIZE)
+    run = lambda p: run_callback(thrust_params(p), roll_params(p), VISUALIZE=VISUALIZE)
 
-    def compute_error(hover_error, max_allowed_vel, drone_max_vel, max_allwoed_oscil, total_oscillations):
-        return hover_error
-
-    # Calculate best_error from above returned values
-    best_error = compute_error(*rc_out)
-
-    dp = [1.0, 1.0, 1e-3, 1.0, 1.0]
-    threshold = 1e-4
-
-    while sum(dp) > threshold:
-        for idx in range(len(params)):
-            params[idx] += dp[idx]
-            rc_out = run_callback(thrust_params(params), roll_params(params), VISUALIZE=VISUALIZE)
-            error = compute_error(*rc_out)
-
-            # good signal
-            if error < best_error:
-                dp[idx] *= 1.05
-                best_error = error 
-
-            else:
-                # check other direction 
-                params[idx] -= 2 * dp[idx]
-                error = compute_error(*run_callback(thrust_params(params), roll_params(params), VISUALIZE=VISUALIZE))
-
-                if error < best_error:
-                    dp[idx] *= 1.05 
-                    best_error = error
-                else:
-                    params[idx] += dp[idx]  # reset to origin
-                    dp[idx] *= 0.95
-
-    # Implement your code to use twiddle to tune the params and find the best_error
+    params = twiddle(run, params, [0.2, 5.0, 1e-3, 0.1, 2.0])
 
     # Return the dict of gain values that give the best error.
-
     return thrust_params(params), roll_params(params)
 
 def who_am_i():
