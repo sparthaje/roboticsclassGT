@@ -23,6 +23,7 @@
 #   project files.
 
 import math
+import heapq
 
 OUTPUT_UNIQUE_FILE_ID = False
 if OUTPUT_UNIQUE_FILE_ID:
@@ -62,26 +63,116 @@ class DeliveryPlanner_PartA:
         # or you may choose to use arrows instead
         # ['🡑', '🡐', '🡓', '🡒',  '🡔', '🡕', '🡖', '🡗']
 
+    def h(self, s, box):
+        # from: https://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html
+        goal = self.box_locations[box] if box is not None else self.dropzone_location
+        dx = abs(goal[0] - s[0])
+        dy = abs(goal[1] - s[1])
+        to_center = 2 * (dx + dy) - min(dx, dy)
+        return max(0, to_center - 3)
+
+    def adjacent_to_box(self, pos, box):
+        target = self.box_locations[box] if box is not None else self.dropzone_location
+        di = abs(target[0] - pos[0])
+        dj = abs(target[1] - pos[1])
+        return max(di, dj) == 1
+
+    DELTAS = [
+        (-1, 0, "n", 2),
+        (1, 0, "s", 2),
+        (0, 1, "e", 2),
+        (0, -1, "w", 2),
+        (-1, 1, "ne", 3),
+        (-1, -1, "nw", 3),
+        (1, 1, "se", 3),
+        (1, -1, "sw", 3),
+    ]
+
+    def neighbors(self, pos):
+        result = []
+        for di, dj, direction, cost in self.DELTAS:
+            ni, nj = pos[0] + di, pos[1] + dj
+            if ni < 0 or nj < 0:
+                continue
+            try:
+                cell = self.warehouse_viewer[ni][nj]
+            except IndexError:
+                continue
+            if cell == '.' or cell == '@':
+                result.append(((ni, nj), direction, cost))
+        return result
+
+    def astar(self, start, box) -> list:
+        open_set = [(0, start)]
+        parent_dict = dict()
+        g = {start: 0.0}
+
+        while open_set:
+            _, pos = heapq.heappop(open_set)
+
+            # goal
+            if self.adjacent_to_box(pos, box):
+                path = [pos]
+                while pos in parent_dict: 
+                    pos = parent_dict[pos]
+                    path.append(pos)
+                return path[::-1]
+
+            for n, _, cost in self.neighbors(pos):
+                g_n = g[pos] + cost
+                if g_n < g.get(n, float('inf')):
+                    parent_dict[n] = pos 
+                    g[n] = g_n 
+                    f = g_n + self.h(n, box)
+                    heapq.heappush(open_set, (f, n))
+
+
+
+    def direction(self, frm, to):
+        di = to[0] - frm[0]
+        dj = to[1] - frm[1]
+        for ddi, ddj, name, _ in self.DELTAS:
+            if ddi == di and ddj == dj:
+                return name
+        return None
+
+    # if len path s zero this crashes but that means solution is wrong so is chill
+    def path_to_moves(self, path):
+        moves = []
+        for i in range(len(path) - 1):
+            moves.append("move " + self.direction(path[i], path[i + 1]))
+        return moves
+
     def plan_delivery(self, debug=False):
         """
         plan_delivery() is required and will be called by the autograder directly.
         You may not change the function signature for it.
         All print outs must be conditioned on the debug flag.
         """
+        moves = []
+        pos = self.dropzone_location
 
-        # The following is the hard coded solution to test case 1
-        moves = ['move w',
-                 'move nw',
-                 'lift 1',
-                 'move se',
-                 'down e',
-                 'move ne',
-                 'lift 2',
-                 'down s']
+        # subroutine solution where a* is only from drop off to pick up and vice versa 
+        for box in self.todo:
+            # lift box
+            path = self.astar(pos, box)
+            moves += self.path_to_moves(path)
+            pos = path[-1]
+            moves.append("lift " + box)
+
+            # clear the picked box as wackalbe 
+            box_i, box_j = self.box_locations[box]
+            self.warehouse_viewer[box_i][box_j] = '.'
+
+            # drop off box
+            path = self.astar(pos, None)
+            moves += self.path_to_moves(path)
+            pos = path[-1]
+            moves.append("down " + self.direction(pos, self.dropzone_location))
 
         if debug:
-            for i in range(len(moves)):
-                print(moves[i])
+            for m in moves:
+                print(m)
 
         return moves
 
@@ -121,6 +212,14 @@ class PathSmoothing_PartB:
 
         self.delta_directions = ["n", "w", "s", "e", "nw", "ne", "se", "sw"]
 
+        self.obstacles = set(tuple(o) for o in obs)
+        self.rows = len(warehouse)
+        self.cols = len(warehouse[0])
+
+        self.path_cumlen = [0.0]
+        for i in range(1, len(self.path)):
+            self.path_cumlen.append(self.path_cumlen[-1] + math.dist(self.path[i - 1], self.path[i]))
+
         # You may use these symbols indicating direction for visual debugging
         # ['^', '<', 'v', '>', '\\', '/', '[', ']']
         # or you may choose to use arrows instead
@@ -158,6 +257,101 @@ class PathSmoothing_PartB:
                     self.warehouse_state[i][j] = box_id
                     self.boxes[box_id] = (i, j)
 
+    DELTAS = {
+        "n": (-1, 0),
+        "ne": (-1, 1),
+        "e": (0, 1),
+        "se": (1, 1),
+        "s": (1, 0),
+        "sw": (1, -1),
+        "w": (0, -1),
+        "nw": (-1, -1),
+    }
+    HEADINGS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+
+    def allowed_turns(self, heading):
+        if heading is None:
+            return list(self.HEADINGS)
+        idx = self.HEADINGS.index(heading)
+        return [self.HEADINGS[(idx + k) % 8] for k in (-1, 0, 1)]
+
+    def original_at_arclen(self, s):
+        cum = self.path_cumlen
+        if s <= 0:
+            return self.path[0]
+        if s >= cum[-1]:
+            return self.path[-1]
+        for i in range(1, len(cum)):
+            if cum[i] >= s:
+                t = (s - cum[i - 1]) / (cum[i] - cum[i - 1])
+                y = self.path[i - 1][0] + t * (self.path[i][0] - self.path[i - 1][0])
+                x = self.path[i - 1][1] + t * (self.path[i][1] - self.path[i - 1][1])
+                return (y, x)
+        return self.path[-1]
+
+    def dist_to_original_path(self, pos, s):
+        return math.dist(pos, self.original_at_arclen(s))
+
+    def neighbors(self, pos, heading, depth):
+        result = []
+        for d in self.allowed_turns(heading):
+            di, dj = self.DELTAS[d]
+            ni, nj = pos[0] + di, pos[1] + dj
+            # stay on the map
+            if ni < 0 or nj < 0 or ni >= self.rows or nj >= self.cols:
+                continue
+            if self.warehouse_object[ni][nj] == '#':
+                continue
+            if (ni, nj) in self.obstacles:
+                continue
+            step_len = math.sqrt(2) if (di != 0 and dj != 0) else 1
+            if self.dist_to_original_path((ni, nj), depth + step_len) > 2.8:
+                continue
+            result.append(((ni, nj), d, step_len))
+        return result
+
+    def direction(self, frm, to):
+        di = to[0] - frm[0]
+        dj = to[1] - frm[1]
+        for name, (ddi, ddj) in self.DELTAS.items():
+            if ddi == di and ddj == dj:
+                return name
+        return None
+
+    def path_to_moves(self, path):
+        moves = []
+        for i in range(len(path) - 1):
+            moves.append("move " + self.direction(path[i], path[i + 1]))
+        return moves
+
+    def bfs(self, start, goal):
+        to_visit = [(start, None)]
+        depth = [0.0]  # traveled arc length so far
+        parent = dict()
+        visited = {(start, None)}
+
+        while to_visit:
+            pos, heading = to_visit.pop(0)
+            d = depth.pop(0)
+
+            if pos == goal:
+                path = [pos]
+                state = (pos, heading)
+                while state in parent:
+                    state = parent[state]
+                    path.append(state[0])
+                return path[::-1]
+
+            for npos, ndir, step_len in self.neighbors(pos, heading, d):
+                state = (npos, ndir)
+                if state not in visited:
+                    visited.add(state)
+                    parent[state] = (pos, heading)
+                    to_visit.append(state)
+                    depth.append(d + step_len)
+
+        return None
+
     def smooth_path(self, debug=False):
         """
          You may use the starter code provided above in any way you choose,
@@ -170,11 +364,14 @@ class PathSmoothing_PartB:
          smooth_path should be a list of integer points
          moves should be a list of strings representing the moves your robot will make to follow the smooth path
         """
+        # extract the start and goal states (grader passes [y, x] lists)
+        start = tuple(self.start_loc)
+        goal = tuple(self.goal_loc)
 
-        # hard code solution for TC #1
-        smooth_path = [[0, 0], [1, 0], [2, 1]]
-        moves = ['move s', 'move se']
+        path = self.bfs(start, goal)
 
+        smooth_path = [list(p) for p in path]
+        moves = self.path_to_moves(path)
 
         if debug:
             print("Original Path:")
@@ -193,68 +390,7 @@ class PathSmoothing_PartB:
 
 def who_am_i():
     # Please specify your GT login ID in the whoami variable (ex: jsmith226).
-    whoami = ''
+    whoami = 'sparthaje3'
     return whoami
 
-
-if __name__ == "__main__":
-    """
-    You may execute this file to develop and test the search algorithm prior to running
-    the delivery planner in the testing suite.  Copy any test cases from the
-    testing suite or make up your own.
-    Run command:  python path_search.py
-    """
-
-    # Test code in here will NOT be called by the autograder
-    # This section is just a provided as a convenience to help in your development/debugging process
-
-    # Testing for Part A
-    print('\n~~~ Testing for part A: ~~~\n')
-
-    from testing_suite_partA import wrap_warehouse_object, Counter
-
-    # test case data starts here
-    # testcase 1
-    warehouse = [
-        '######',
-        '#....#',
-        '#.1#2#',
-        '#..#.#',
-        '#...@#',
-        '######',
-    ]
-    todo = list('12')
-    benchmark_cost = 23
-    viewed_cell_count_threshold = 20
-    dropzone = (4,4)
-    box_locations = {
-        '1': (2,2),
-        '2': (2,4),
-    }
-    # test case data ends here
-
-    viewed_cells = Counter()
-    warehouse_access = wrap_warehouse_object(warehouse, viewed_cells)
-    partA = DeliveryPlanner_PartA(warehouse_access, dropzone, todo, box_locations)
-    partA.plan_delivery(debug=True)
-    # Note that the viewed cells for the hard coded solution provided
-    # in the initial template code will be 0 because no actual search
-    # process took place that accessed the warehouse
-    print('Viewed Cells:', len(viewed_cells))
-    print('Viewed Cell Count Threshold:', viewed_cell_count_threshold)
-
-    # Testing for Part B
-    # testcase 1
-    print('\nTesting for part B:')
-    path = [[0, 0], [1, 0], [2, 0], [2, 1]]
-    warehouse = ['....',
-                 '....',
-                 '.@..',
-                 '...#']
-    obs = [[3, 3]]
-    robot_init = [[0, 0]],
-    benchmark_path = 3
-
-    partB = PathSmoothing_PartB(warehouse, obs, path, robot_init, benchmark_path)
-    partB.smooth_path(debug=True)
 
